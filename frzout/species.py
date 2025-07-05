@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 
 import pkgutil
@@ -187,9 +188,14 @@ def _read_particle_data():
             #   - it is a baryon (i.e. has three quarks)
             #   - it is charged
             #   - it is a neutral meson with two different quarks
+
+            # Determine baryon number: +1 for baryons (3quarks), 0 for mesons
+            baryon_number = 1 if q3 != 0 else 0
+
             data.update(
                 charge=charge,
                 has_anti=(q3 != 0 or charge != 0 or q1 != q2),
+                baryon_number=baryon_number,
             )
             yield ID, data
 
@@ -248,6 +254,8 @@ def _normalize_species(species='all'):
         for ID, info in species_items():
             yield ID, info
             if info['has_anti']:
-                yield -ID, info
+                anti_info = info.copy()
+                anti_info['baryon_number'] = -info['baryon_number']
+                yield -ID, anti_info
 
     return sorted(all_species_items(), key=lambda i: i[1]['mass'])

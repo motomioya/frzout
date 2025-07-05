@@ -1,3 +1,4 @@
+
 # cython: boundscheck = False, wraparound = False, initializedcheck = False
 
 import threading
@@ -42,6 +43,8 @@ cdef struct SurfaceElem:
     double vmax
     ShearTensor pi
     double Pi
+    double d
+    double mub
 
 cdef class Surface:
     """
@@ -120,12 +123,14 @@ cdef class Surface:
         """ Whether the surface is boost-invariant or not (2D or 3D). """
         int shear, bulk
 
-    def __cinit__(self, x, sigma, v, pi=None, Pi=None, ymax=None):
+    def __cinit__(self, x, sigma, v, d, mub, pi=None, Pi=None, ymax=None):
         # trailing underscores indicate cython memoryviews
         cdef:
             double[:, :] x_ = np.array(x, dtype=float, copy=False, ndmin=2)
             double[:, :] sigma_ = np.array(sigma, dtype=float, copy=False, ndmin=2)
             double[:, :] v_ = np.array(v, dtype=float, copy=False, ndmin=2)
+            double[:] d_ = np.array(d, dtype=float, copy=False, ndmin=1)
+            double[:] mub_ = np.array(mub, dtype=float, copy=False, ndmin=1)
 
         self.n = x_.shape[0]
 
@@ -211,6 +216,9 @@ cdef class Surface:
 
             vx = v_[i, 0]
             vy = v_[i, 1]
+
+            elem.d = d_[i]
+            elem.mub = mub_[i]
 
             # handle longitudinal direction depending on boost invariance
             if self.boost_invariant:
@@ -386,6 +394,8 @@ cdef struct SpeciesInfo:
     # scale factors for momentum sampling
     # see init_species() and sample_four_momentum()
     double xscale, Pscale
+    # baryon number
+    int baryon
 
 
 cdef void init_species(
@@ -401,6 +411,7 @@ cdef void init_species(
     s.degen = info['degen']
     s.sign  = -1 if info['boson'] else 1
     s.m0    = info['mass']
+    s.baryon = info['baryon']
 
     if res_width and 'mass_range' in info:
         s.stable   = 0
@@ -673,7 +684,7 @@ cdef double integrate_species(
 
 cdef void sample_four_momentum(
     const SpeciesInfo* s, double T,
-    double shear_pscale, const ShearTensor* pi, double bulk_pscale,
+    double shear_pscale, const ShearTensor* pi, const double* d, const double* mub, double bulk_pscale,
     RNG* rng, FourVector* p
 ) nogil:
     """
@@ -720,7 +731,15 @@ cdef void sample_four_momentum(
         pmag = -T*s.xscale*math.log(r)
 
         # acceptance probability
-        P *= s.Pscale / r / (math.exp(math.sqrt(m*m + pmag*pmag)/T) + s.sign)
+        baryon_factor = 0
+        if s.baryon == 1:
+          baryon_factor = d[0]*mub[0]/T
+        elif s.baryon == -1:
+          baryon_factor = -d[0]*mub[0]/T
+        else:
+          baryon_factor = 0
+
+        P *= s.Pscale / r / (math.exp(math.sqrt(m*m + pmag*pmag)/T - baryon_factor) + s.sign)
 
         if random.rand(rng) < P:
             break
@@ -1404,7 +1423,7 @@ cdef void _sample(
 
                 sample_four_momentum(
                     species, hrg.T,
-                    hrg.shear_pscale, &elem.pi, bulk_pscale,
+                    hrg.shear_pscale, &elem.pi, &elem.d, &elem.mub, bulk_pscale,
                     rng, &p
                 )
                 fourvec.boost_inverse(&p, &elem.u)
